@@ -1,4 +1,4 @@
-module github.com/takehaya/goxdp-template
+module github.com/takehaya/go-afxdp-l4conn
 
 go 1.21
 
@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/asavie/xdp v0.3.3 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.0-20190314233015-f79a8a8ca69d // indirect
 	github.com/russross/blackfriday/v2 v2.0.1 // indirect
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect

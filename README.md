@@ -1,4 +1,4 @@
-# goxdp
+# go-afxdp-l4conn
 A sample for writing XDP programs in Go
 
 It's best to change this to get started with code for xdp using [cilium/ebpf](https://github.com/cilium/ebpf).
