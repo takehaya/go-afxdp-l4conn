@@ -1,16 +1,17 @@
 package coreelf_test
 
 import (
-	"errors"
 	"net"
 	"testing"
 
+	"github.com/asavie/xdp"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/takehaya/go-afxdp-l4conn/pkg/coreelf"
+	"github.com/takehaya/go-afxdp-l4conn/pkg/xdptool"
 )
 
 var payload = []byte{
@@ -66,18 +67,40 @@ func TestXDPProg(t *testing.T) {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		t.Fatal(err)
 	}
-	objs, err := coreelf.ReadCollection()
-	if err != nil {
-		var verr *ebpf.VerifierError
-		if errors.As(err, &verr) {
-			t.Fatalf("%+v\n", verr)
-		} else {
-			t.Fatal(err)
-		}
+	port := 4789
+	devices := []string{"lo"}
+	// get ebpf binary
+	ebpfoptions := &ebpf.CollectionOptions{
+		Programs: ebpf.ProgramOptions{
+			LogLevel: ebpf.LogLevelInstruction,
+			LogSize:  102400 * 1024,
+		},
 	}
-	defer objs.Close()
+	afxdpProg, err := coreelf.NewAfXdpProgram(uint32(port), ebpfoptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer afxdpProg.Close()
 
-	ret, got, err := objs.XdpProg.Test(generateInput(t))
+	afxdpl4Hd, err := xdptool.NewAfXdpL4Handler(xdptool.AfXdpL4HandlerOptions{
+		Port:           uint32(port),
+		Devices:        devices,
+		QueueIDs:       queueid,
+		ProgramOptions: ebpfoptions,
+		SocketOptions: &xdp.SocketOptions{
+			NumFrames:              204800,
+			FrameSize:              4096,
+			FillRingNumDescs:       8192,
+			CompletionRingNumDescs: 64,
+			RxRingNumDescs:         8192,
+			TxRingNumDescs:         64,
+		},
+	})
+	if err != nil {
+		t.Fatal(t)
+	}
+
+	ret, got, err := afxdpl4Hd.AfxdpProg.Program.Test(generateInput(t))
 	if err != nil {
 		t.Error(err)
 	}

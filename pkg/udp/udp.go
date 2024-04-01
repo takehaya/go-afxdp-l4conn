@@ -13,6 +13,9 @@ package udp
 // 	// ebpf "github.com/cody0704/xdp-examples/examples/recv_udp/xdp_sock"
 // )
 
+type UDPConn struct {
+}
+
 // var limits = make(chan []byte)
 // var count int
 

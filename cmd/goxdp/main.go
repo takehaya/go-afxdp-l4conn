@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -9,10 +9,11 @@ import (
 
 	"github.com/asavie/xdp"
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/rlimit"
 	"github.com/pkg/errors"
-	"github.com/takehaya/goxdp-template/pkg/coreelf"
-	"github.com/takehaya/goxdp-template/pkg/version"
-	"github.com/takehaya/goxdp-template/pkg/xdptool"
+	"github.com/takehaya/go-afxdp-l4conn/pkg/coreelf"
+	"github.com/takehaya/go-afxdp-l4conn/pkg/version"
+	"github.com/takehaya/go-afxdp-l4conn/pkg/xdptool"
 	"github.com/urfave/cli"
 )
 
@@ -66,7 +67,9 @@ func run(ctx *cli.Context) error {
 	log.Println(queueid)
 	multipleReceiverPoolSize := ctx.Int("multipleReceiverPoolSize")
 	log.Println(multipleReceiverPoolSize)
-
+	if err := rlimit.RemoveMemlock(); err != nil {
+		log.Fatal(err)
+	}
 	// get ebpf binary
 	ebpfoptions := &ebpf.CollectionOptions{
 		Programs: ebpf.ProgramOptions{
@@ -80,19 +83,23 @@ func run(ctx *cli.Context) error {
 	}
 	defer afxdpProg.Close()
 
-	//attach afxdp
-	xskmap, err := xdptool.XskAttach(devices, queueid, afxdpProg, &xdp.SocketOptions{
-		NumFrames:              204800,
-		FrameSize:              4096,
-		FillRingNumDescs:       8192,
-		CompletionRingNumDescs: 64,
-		RxRingNumDescs:         8192,
-		TxRingNumDescs:         64,
+	afxdpl4Hd, err := xdptool.NewAfXdpL4Handler(xdptool.AfXdpL4HandlerOptions{
+		Port:           uint32(port),
+		Devices:        devices,
+		QueueIDs:       queueid,
+		ProgramOptions: ebpfoptions,
+		SocketOptions: &xdp.SocketOptions{
+			NumFrames:              204800,
+			FrameSize:              4096,
+			FillRingNumDescs:       8192,
+			CompletionRingNumDescs: 64,
+			RxRingNumDescs:         8192,
+			TxRingNumDescs:         64,
+		},
 	})
 	if err != nil {
 		return errors.WithStack(err)
 	}
-
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
@@ -100,43 +107,22 @@ func run(ctx *cli.Context) error {
 	log.Println("Press CTRL+C to stop.")
 	go func() {
 		<-signalChan
-		err := xdptool.XskDetach(xskmap, queueid, afxdpProg)
+		err := afxdpl4Hd.Close()
 		if err != nil {
-			log.Printf("detach error: %v\n", err)
+			log.Printf("close error: %v\n", err)
 		}
 		os.Exit(1)
 	}()
-	for {
-		// If there are any free slots on the Fill queue...
-		if n := xsk.NumFreeFillSlots(); n > 0 {
-			// ...then fetch up to that number of not-in-use
-			// descriptors and push them onto the Fill ring queue
-			// for the kernel to fill them with the received
-			// frames.
-			xsk.Fill(xsk.GetDescs(n))
-		}
-		// Wait for receive - meaning the kernel has
-		// produced one or more descriptors filled with a received
-		// frame onto the Rx ring queue.
-		// log.Printf("waiting for frame(s) to be received...")
-		numRx, _, err := xsk.Poll(-1)
-		if err != nil {
-			fmt.Printf("error: %v\n", err)
-			return
-		}
 
-		if numRx > 0 {
-			// Consume the descriptors filled with received frames
-			// from the Rx ring queue.
-			rxDescs := xsk.Receive(numRx)
-			// Print the received frames and also modify them
-			// in-place replacing the destination MAC address with
-			// broadcast address.
-			for i := 0; i < len(rxDescs); i++ {
-				pktData := xsk.GetFrame(rxDescs[i])
-				limits <- pktData
-			}
-		}
+	rxChan, _ := afxdpl4Hd.Invoke(context.Background())
+	count := 0
+	for pktData := range rxChan {
+		// PAYLOAD
+		// _ = pktData
+		count++
+		log.Println("Count: ", count)
+		log.Println("Received")
+		log.Println(pktData)
 	}
 	return nil
 }

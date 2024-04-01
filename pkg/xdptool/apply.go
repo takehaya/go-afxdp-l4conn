@@ -50,8 +50,9 @@ func Detach(device string) error {
 	return nil
 }
 
-func XskAttach(devices []string, queueIDs []int, prog *xdp.Program, options *xdp.SocketOptions) (map[string][]*xdp.Socket, error) {
-	xskmap := make(map[string][]*xdp.Socket)
+// device 1 - N NICQueueの組で Socketを作る
+func XskAttach(devices []string, queueIDs []int, prog *xdp.Program, options *xdp.SocketOptions) (map[string][]*AfXdpL4Socket, error) {
+	xskmap := make(map[string][]*AfXdpL4Socket)
 	for _, dev := range devices {
 		link, err := netlink.LinkByName(dev)
 		if err != nil {
@@ -68,13 +69,20 @@ func XskAttach(devices []string, queueIDs []int, prog *xdp.Program, options *xdp
 			if err := prog.Register(queueID, xsk.FD()); err != nil {
 				return nil, fmt.Errorf("failed to register socket in eBPF map: %w", err)
 			}
-			xskmap[dev] = append(xskmap[dev], xsk)
+			l4sock := &AfXdpL4Socket{
+				deviceID: dev,
+				queueID:  uint8(queueID),
+				xsk:      xsk,
+				rxChan:   make(chan []byte),
+				txChan:   make(chan []byte),
+			}
+			xskmap[dev] = append(xskmap[dev], l4sock)
 		}
 	}
 	return xskmap, nil
 }
 
-func XskDetach(xskmap map[string][]*xdp.Socket, queueIDs []int, prog *xdp.Program) error {
+func XskDetach(xskmap map[string][]*AfXdpL4Socket, queueIDs []int, prog *xdp.Program) error {
 	for _, queueID := range queueIDs {
 		if err := prog.Unregister(queueID); err != nil {
 			return fmt.Errorf("failed to unregister socket in eBPF map: %w", err)
@@ -82,7 +90,7 @@ func XskDetach(xskmap map[string][]*xdp.Socket, queueIDs []int, prog *xdp.Progra
 	}
 	for dev, xsks := range xskmap {
 		for _, v := range xsks {
-			if err := v.Close(); err != nil {
+			if err := v.xsk.Close(); err != nil {
 				return fmt.Errorf("failed to close XDP socket: %w", err)
 			}
 		}
